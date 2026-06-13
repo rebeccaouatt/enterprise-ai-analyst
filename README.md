@@ -6,6 +6,19 @@ An autonomous AI agent that answers complex business questions by combining SQL 
 
 ---
 
+## Live Endpoint (Google Cloud Run)
+
+```
+https://enterprise-ai-analyst-638408101225.europe-west1.run.app
+```
+
+Health check:
+```
+https://enterprise-ai-analyst-638408101225.europe-west1.run.app/health
+```
+
+---
+
 ## Quick Start
 
 ### Prerequisites
@@ -39,26 +52,35 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 4. Run the ETL Pipeline
+### 4. Start Docker services
+```bash
+# Start Qdrant (local)
+docker run -d --name qdrant -p 6333:6333 qdrant/qdrant
+
+# Start Redis (Semantic Cache)
+docker run -d --name redis -p 6379:6379 redis
+```
+
+### 5. Run the ETL Pipeline
 ```bash
 # Create SQL database
 python phase1_etl/create_database.py
 
-# Ingest documents into Qdrant
+# Clean and ingest documents into Qdrant
 python phase1_etl/ingest_qdrant.py
 ```
 
-### 5. Run the agent locally
+### 6. Run the agent locally
 ```bash
 python -m phase2_agent.agent
 ```
 
-### 6. Start the API
+### 7. Start the API
 ```bash
 uvicorn phase3_deployment.api:api --host 0.0.0.0 --port 8080
 ```
 
-### 7. Test the API
+### 8. Test the API
 ```bash
 # Health check
 curl http://localhost:8080/health
@@ -71,20 +93,6 @@ curl -X POST http://localhost:8080/query \
 
 ---
 
-## Live Endpoint (Google Cloud Run)
-
-```
-https://enterprise-ai-analyst-638408101225.europe-west1.run.app
-```
-
-```bash
-curl -X POST https://enterprise-ai-analyst-638408101225.europe-west1.run.app/query \
-  -H "Content-Type: application/json" \
-  -d '{"question": "What did NVIDIA say about AI demand in 2023?"}'
-```
-
----
-
 ## Project Structure
 
 ```
@@ -92,19 +100,23 @@ enterprise-ai-analyst/
 ├── data/
 │   └── financial.db              # SQLite database (quarterly revenue)
 ├── phase1_etl/
+│   ├── clean_dataset.py          # Text cleaning pipeline
 │   ├── create_database.py        # Creates SQL database
-│   └── ingest_qdrant.py          # Embeds and ingests into Qdrant Cloud
+│   └── ingest_qdrant.py          # Cleans, embeds and ingests into Qdrant Cloud
 ├── phase2_agent/
 │   ├── agent.py                  # LangGraph ReAct Agent
+│   ├── semantic_cache.py         # Redis Semantic Cache (Extra Mile)
 │   └── tools/
 │       ├── sql_tool.py           # SQL tools with error recovery
 │       └── vector_tool.py        # Vector search with metadata filters
 ├── phase3_deployment/
-│   └── api.py                    # FastAPI endpoint + FinOps tracking
+│   └── api.py                    # FastAPI endpoint + FinOps + Cache
 ├── phase4_report/
-│   └── REPORT.md                 # Architecture report + RAGAS evaluation
+│   ├── REPORT.md                 # Architecture report + RAGAS evaluation
+│   └── eval_ragas.py             # RAGAS evaluation script
 ├── Dockerfile                    # Container definition
 ├── docker-compose.yml            # Local orchestration
+├── fix_qdrant_index.py           # Qdrant payload index creation
 ├── requirements.txt
 └── README.md
 ```
@@ -119,16 +131,26 @@ The agent uses a **ReAct loop** (Reason + Act) implemented with LangGraph:
 User Question
      │
      ▼
-FastAPI /query
+Semantic Cache (Redis) ← EXTRA MILE
      │
-     ▼
-LangGraph Agent (Gemini 3 Flash)
+     ├── Cache Hit (similarity >= 0.95) → Instant response, $0.00 cost
      │
-     ├── Numerical question → get_database_schema → execute_sql → SQLite
-     │
-     ├── Qualitative question → search_vector_db → Qdrant Cloud
-     │
-     └── Complex question → Both tools combined
+     └── Cache Miss
+              │
+              ▼
+     FastAPI /query
+              │
+              ▼
+     LangGraph Agent (Gemini 3 Flash)
+              │
+              ├── Numerical question → get_database_schema → execute_sql → SQLite
+              │
+              ├── Qualitative question → search_vector_db → Qdrant Cloud
+              │
+              └── Complex question → Both tools combined
+                                          │
+                                          ▼
+                                   Store in Redis Cache
 ```
 
 ### Tools
@@ -141,9 +163,28 @@ LangGraph Agent (Gemini 3 Flash)
 
 ---
 
+## Extra Mile: Semantic Caching (Redis)
+
+Agent loops are slow and expensive. This project implements a Semantic Cache:
+- Before calling the LangGraph agent, the query is embedded and compared to cached queries
+- If cosine similarity >= 0.95, the cached answer is returned instantly at $0.00 cost
+- Otherwise, the agent runs and the result is stored in Redis for 24 hours
+
+```bash
+# First call: runs the full agent
+{"question": "What was Apple iPhone revenue in 2023?"}
+→ cache_hit: false, cost: $0.0004, time: 45s
+
+# Second call: returns from cache instantly
+{"question": "Apple total iPhone revenue 2023?"}
+→ cache_hit: true, cost: $0.00, time: 0.1s
+```
+
+---
+
 ## Dataset
 
-- **Vector DB:** `virattt/financial-qa-10K` (HuggingFace) — 7,000 real extracts from SEC 10-K filings (70 companies, 2023)
+- **Vector DB:** `virattt/financial-qa-10K` (HuggingFace) — 6,994 cleaned extracts from SEC 10-K filings (70 companies, 2023)
 - **SQL DB:** Quarterly revenue data for Apple, Microsoft, Google, Amazon, Meta (2022-2023)
 
 ---
@@ -176,5 +217,7 @@ LangGraph Agent (Gemini 3 Flash)
 | Vector DB | Qdrant Cloud (Frankfurt) |
 | Embeddings | all-MiniLM-L6-v2 |
 | SQL | SQLite |
+| Semantic Cache | Redis (Extra Mile) |
 | API | FastAPI |
-| Cloud | Google Cloud Run |
+| Cloud | Google Cloud Run (europe-west1) |
+| Repo | GitHub public |

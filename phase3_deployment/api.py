@@ -10,10 +10,11 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 load_dotenv()
 
 from phase2_agent.agent import app as agent_app
+from phase2_agent.semantic_cache import get_cached_response, cache_response
 
 api = FastAPI(
     title="Enterprise AI Data Analyst",
-    description="Multi-modal agent combining SQL and Vector DB search",
+    description="Multi-modal agent combining SQL and Vector DB search with Semantic Caching",
     version="1.0.0"
 )
 
@@ -25,8 +26,9 @@ class QueryResponse(BaseModel):
     answer: str
     token_cost_usd: float
     execution_time_seconds: float
+    cache_hit: bool
 
-# Token cost constants (Gemini Flash pricing)
+# Token cost constants
 INPUT_COST_PER_1M  = 0.075
 OUTPUT_COST_PER_1M = 0.30
 
@@ -37,6 +39,17 @@ def health_check():
 @api.post("/query", response_model=QueryResponse)
 def query(request: QueryRequest):
     start_time = time.time()
+
+    # Check semantic cache first
+    cached = get_cached_response(request.question)
+    if cached:
+        return QueryResponse(
+            question=request.question,
+            answer=cached,
+            token_cost_usd=0.0,
+            execution_time_seconds=round(time.time() - start_time, 2),
+            cache_hit=True
+        )
 
     # Run the agent
     final_state = agent_app.invoke(
@@ -53,7 +66,7 @@ def query(request: QueryRequest):
     else:
         answer = last_msg.content
 
-    # Estimate token cost from message history
+    # Token cost
     total_input_tokens = 0
     total_output_tokens = 0
     for msg in final_state['messages']:
@@ -68,12 +81,16 @@ def query(request: QueryRequest):
 
     print(f"\n[FINOPS] Input tokens: {total_input_tokens}")
     print(f"[FINOPS] Output tokens: {total_output_tokens}")
-    print(f"[FINOPS] Estimated cost: ${token_cost:.6f}")
-    print(f"[FINOPS] Execution time: {execution_time:.2f}s")
+    print(f"[FINOPS] Cost: ${token_cost:.6f}")
+    print(f"[FINOPS] Time: {execution_time:.2f}s")
+
+    # Store in cache
+    cache_response(request.question, answer)
 
     return QueryResponse(
         question=request.question,
         answer=answer,
         token_cost_usd=token_cost,
-        execution_time_seconds=round(execution_time, 2)
+        execution_time_seconds=round(execution_time, 2),
+        cache_hit=False
     )
