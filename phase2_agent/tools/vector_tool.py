@@ -21,8 +21,19 @@ llm_client = instructor.from_openai(
     mode=instructor.Mode.JSON
 )
 
-qdrant = QdrantClient(url="http://localhost:6333")
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
+qdrant = QdrantClient(
+    url=os.getenv("QDRANT_URL", "http://localhost:6333"),
+    api_key=os.getenv("QDRANT_API_KEY")
+)
+
+# Lazy loading embedder
+_embedder = None
+
+def get_embedder():
+    global _embedder
+    if _embedder is None:
+        _embedder = SentenceTransformer("all-MiniLM-L6-v2")
+    return _embedder
 
 # Pydantic model for query parsing
 class SearchIntent(BaseModel):
@@ -74,7 +85,7 @@ def search_vector_db(query: str) -> str:
     strict_filter = models.Filter(must=qdrant_filters) if qdrant_filters else None
 
     # Embed and search
-    query_vector = embedder.encode(intent.semantic_query).tolist()
+    query_vector = get_embedder().encode(intent.semantic_query).tolist()
     response = qdrant.query_points(
         collection_name="financial_reports",
         query=query_vector,

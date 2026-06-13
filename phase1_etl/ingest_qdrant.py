@@ -1,11 +1,19 @@
+import os
+import re
 from datasets import load_dataset
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from sentence_transformers import SentenceTransformer
-import re
+from dotenv import load_dotenv
 
-# Initialize clients
-client = QdrantClient(url="http://localhost:6333")
+load_dotenv()
+
+# Initialize Qdrant Cloud client
+client = QdrantClient(
+    url=os.getenv("QDRANT_URL"),
+    api_key=os.getenv("QDRANT_API_KEY")
+)
+
 COLLECTION_NAME = "financial_reports"
 
 # Load embedding model
@@ -40,8 +48,25 @@ TICKER_TO_COMPANY = {
     "HLT": "Hilton", "LVS": "Las Vegas Sands",
 }
 
-# Extract year from filing string (e.g. "2023_10K" -> 2023)
+def clean_text(text: str) -> str:
+    """Clean a financial report text extract before ingestion."""
+    if not text or len(text.strip()) < 20:
+        return ""
+    # Normalize whitespace
+    text = re.sub(r'\s+', ' ', text)
+    # Remove non-printable characters
+    text = re.sub(r'[^\x20-\x7E]', ' ', text)
+    # Normalize quotes
+    text = text.replace('\u2018', "'").replace('\u2019', "'")
+    text = text.replace('\u201c', '"').replace('\u201d', '"')
+    # Normalize dashes
+    text = text.replace('\u2013', '-').replace('\u2014', '-')
+    # Remove repeated punctuation
+    text = re.sub(r'([.!?])\1+', r'\1', text)
+    return text.strip()
+
 def extract_year(filing: str) -> int:
+    import re
     match = re.search(r'\d{4}', filing)
     return int(match.group()) if match else 2023
 
@@ -66,20 +91,27 @@ documents = ds['train']
 BATCH_SIZE = 100
 points = []
 total = len(documents)
+ingested = 0
+skipped = 0
 
-print(f"Embedding and ingesting {total} documents into Qdrant...")
+print(f"Cleaning, embedding and ingesting {total} documents into Qdrant Cloud...")
 
 for i, doc in enumerate(documents):
+    # Clean text before ingestion
+    text = clean_text(doc['context'])
+    if not text:
+        skipped += 1
+        continue
+
     ticker = doc['ticker']
     company = TICKER_TO_COMPANY.get(ticker, ticker)
     year = extract_year(doc['filing'])
-    text = doc['context']
 
     vector = embedder.encode(text).tolist()
 
     points.append(
         models.PointStruct(
-            id=i,
+            id=ingested,
             vector=vector,
             payload={
                 "company": company,
@@ -92,16 +124,17 @@ for i, doc in enumerate(documents):
             }
         )
     )
+    ingested += 1
 
-    # Upload batch
     if len(points) == BATCH_SIZE:
         client.upsert(collection_name=COLLECTION_NAME, points=points)
-        print(f"Ingested {i+1}/{total} documents...")
+        print(f"Ingested {ingested}/{total} documents...")
         points = []
 
-# Upload remaining points
 if points:
     client.upsert(collection_name=COLLECTION_NAME, points=points)
 
-print(f"\nDone! {total} documents ingested into '{COLLECTION_NAME}'")
-print(f"Collection info: {client.get_collection(COLLECTION_NAME)}")
+print(f"\nDone!")
+print(f"  Ingested : {ingested}")
+print(f"  Skipped  : {skipped}")
+print(f"Collection: '{COLLECTION_NAME}' on Qdrant Cloud")
