@@ -1,0 +1,28 @@
+# Dataset
+datasets
+
+# LLM & Agent
+langchain
+langchain-google-genai
+langgraph
+instructor
+openai
+
+# Validation
+pydantic>=2.0
+
+# Vector DB
+qdrant-client
+sentence-transformers
+
+# PDF Processing
+pdfplumber
+pypdf
+
+# API
+fastapi
+uvicorn[standard]
+
+# Utils
+python-dotenv
+tenacity
