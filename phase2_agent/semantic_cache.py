@@ -1,12 +1,21 @@
 import json
 import numpy as np
-import redis
+import os
 from sentence_transformers import SentenceTransformer
 
-# Redis connection
-cache_client = redis.Redis(host="localhost", port=6379, db=0, decode_responses=False)
+# Redis connection - optional
+try:
+    import redis
+    REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+    cache_client = redis.from_url(REDIS_URL, decode_responses=False)
+    cache_client.ping()
+    REDIS_AVAILABLE = True
+    print("[CACHE] Redis connected successfully")
+except Exception:
+    cache_client = None
+    REDIS_AVAILABLE = False
+    print("[CACHE] Redis not available - caching disabled")
 
-# Reuse the same embedder
 _embedder = None
 
 def get_embedder():
@@ -21,46 +30,48 @@ CACHE_TTL = 86400  # 24 hours
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
 
-def get_cached_response(query: str) -> str | None:
+def get_cached_response(query: str):
     """Check if a semantically similar query exists in cache."""
-    query_vector = get_embedder().encode(query)
+    if not REDIS_AVAILABLE:
+        return None
 
-    # Get all cached keys
-    keys = cache_client.keys("cache:*")
-    
-    best_score = 0.0
-    best_answer = None
-
-    for key in keys:
-        data = cache_client.get(key)
-        if not data:
-            continue
+    try:
+        query_vector = get_embedder().encode(query)
+        keys = cache_client.keys("cache:*")
         
-        entry = json.loads(data)
-        cached_vector = np.array(entry["vector"])
-        score = cosine_similarity(query_vector, cached_vector)
+        best_score = 0.0
+        best_answer = None
 
-        if score > best_score:
-            best_score = score
-            best_answer = entry["answer"]
+        for key in keys:
+            data = cache_client.get(key)
+            if not data:
+                continue
+            entry = json.loads(data)
+            cached_vector = np.array(entry["vector"])
+            score = cosine_similarity(query_vector, cached_vector)
+            if score > best_score:
+                best_score = score
+                best_answer = entry["answer"]
 
-    if best_score >= SIMILARITY_THRESHOLD:
-        print(f"\n[CACHE HIT] Similarity: {best_score:.4f} — returning cached answer")
-        return best_answer
+        if best_score >= SIMILARITY_THRESHOLD:
+            print(f"\n[CACHE HIT] Similarity: {best_score:.4f}")
+            return best_answer
 
-    return None
+        return None
+    except Exception as e:
+        print(f"[CACHE ERROR] {e}")
+        return None
 
 def cache_response(query: str, answer: str):
     """Store a query-answer pair in Redis cache."""
-    vector = get_embedder().encode(query).tolist()
-    
-    entry = json.dumps({
-        "query": query,
-        "answer": answer,
-        "vector": vector
-    })
+    if not REDIS_AVAILABLE:
+        return
 
-    # Use query hash as key
-    key = f"cache:{hash(query)}"
-    cache_client.setex(key, CACHE_TTL, entry)
-    print(f"\n[CACHE STORED] Query cached for 24h")
+    try:
+        vector = get_embedder().encode(query).tolist()
+        entry = json.dumps({"query": query, "answer": answer, "vector": vector})
+        key = f"cache:{hash(query)}"
+        cache_client.setex(key, CACHE_TTL, entry)
+        print(f"\n[CACHE STORED] Query cached for 24h")
+    except Exception as e:
+        print(f"[CACHE ERROR] {e}")
