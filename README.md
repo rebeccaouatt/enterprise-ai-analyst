@@ -2,7 +2,7 @@
 
 An autonomous AI agent that answers complex business questions by combining SQL queries and semantic search over financial reports.
 
-**Group 12 | Rebecca OUATTARA | Aivancity 2026**
+**Group 12 | Rebecca OUATTARA | Jean -Luc MESSANVI| Aivancity 2026**
 
 ---
 
