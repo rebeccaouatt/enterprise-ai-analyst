@@ -1,5 +1,4 @@
 import os
-import time
 import instructor
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -51,9 +50,6 @@ class SearchIntent(BaseModel):
 def search_vector_db(query: str) -> str:
     """Search the financial reports vector database to answer qualitative questions about companies."""
     print(f"\n[TOOL] Vector search for: {query}")
-
-    # Rate limit protection
-    time.sleep(15)
 
     # Extract filters using LLM
     intent = llm_client.chat.completions.create(

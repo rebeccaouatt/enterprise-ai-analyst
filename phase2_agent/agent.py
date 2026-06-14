@@ -1,5 +1,4 @@
 import os
-import time
 from typing import Annotated, Literal
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage
@@ -47,8 +46,6 @@ Rules:
 
 # Nodes
 def call_model(state: AgentState):
-    # Rate limit protection
-    time.sleep(10)
     messages = state['messages']
     if not isinstance(messages[0], SystemMessage):
         messages = [system_msg] + messages

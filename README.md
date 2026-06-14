@@ -4,7 +4,7 @@ An autonomous AI agent that answers complex business questions by combining SQL 
 
 **Group 12 | Rebecca OUATTARA & Jean-Luc MESSANVI | Aivancity 2026**
 **GitHub:** https://github.com/rebeccaouatt/enterprise-ai-analyst
-**Live API:** https://enterprise-ai-analyst-638408101225.europe-west1.run.app
+**Live API:** https://enterprise-ai-analyst-638408101225.europe-west1.run.app/docs
 
 ---
 
